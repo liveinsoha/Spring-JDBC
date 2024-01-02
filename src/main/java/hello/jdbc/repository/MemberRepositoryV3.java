@@ -3,6 +3,7 @@ package hello.jdbc.repository;
 
 import hello.jdbc.domain.Member;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.jdbc.datasource.DataSourceUtils;
 import org.springframework.jdbc.support.JdbcUtils;
 
 import javax.sql.DataSource;
@@ -10,9 +11,12 @@ import java.sql.*;
 import java.util.NoSuchElementException;
 
 @Slf4j
-public class MemberRepositoryV2 {
+public class MemberRepositoryV3 {
 
     private final DataSource dataSource;
+    /**
+     * 커넥션을 파라미터로 전달하는 부분이 모두 제거
+     */
 
     /**
      * DataSource를 외부로부터 주입받아서 사용한다.
@@ -22,7 +26,7 @@ public class MemberRepositoryV2 {
      * @param dataSource
      */
 
-    public MemberRepositoryV2(DataSource dataSource) {
+    public MemberRepositoryV3(DataSource dataSource) {
         this.dataSource = dataSource;
     }
 
@@ -89,25 +93,6 @@ public class MemberRepositoryV2 {
 
     }
 
-    public void update(Connection con, String memberId, int money) throws SQLException {
-        String sql = "update member set money = ? where member_id = ?";
-        PreparedStatement pstmt = null;
-
-        try {
-            pstmt = con.prepareStatement(sql);
-            pstmt.setInt(1, money);
-            pstmt.setString(2, memberId);
-            int resultSize = pstmt.executeUpdate(); //딱 찍어서 조회하기 때문에 한개만 영향 받을 수 있다
-            log.info("update connection = {}", con);
-        } catch (SQLException e) {
-            log.error("error", e);
-            throw e;
-        } finally {
-            //트랜잭션을 위해 커넥션은 닫지 않았다.
-            JdbcUtils.closeStatement(pstmt);
-        }
-
-    }
 
     public Member save(Member member) throws SQLException {
         String sql = "insert into member(member_id, money) values (?, ?)";
@@ -164,41 +149,29 @@ public class MemberRepositoryV2 {
         }
     }
 
-    public Member findById(Connection con, String memberId) {
-        String sql = "select * from member where member_id = ?";
-        PreparedStatement pstmt = null;
-        ResultSet rs = null;
-        try {
-            PreparedStatement preparedStatement = con.prepareStatement(sql);
-            preparedStatement.setString(1, memberId);
-            rs = preparedStatement.executeQuery();
-            if (rs.next()) {
-                String member_id = rs.getString("member_id");
-                int money = rs.getInt("money");
-                return new Member(member_id, money);
-            } else {//rs에 데이터가 없는경우 false를 반환한다.
-                throw new NoSuchElementException("해당 멤버 없음 memberId = " + memberId);
-            }
-        } catch (SQLException e) {
-            throw new RuntimeException(e);
-        } finally {
-
-            //트랜잭션을 위해 커넥션은 닫지 않았다.
-            JdbcUtils.closeStatement(pstmt);
-            JdbcUtils.closeResultSet(rs);
-        }
-    }
 
     private void close(Connection connection, Statement stmt, ResultSet resultSet) {
-        JdbcUtils.closeConnection(connection);
+        /**
+         * `close()` 에서 `DataSourceUtils.releaseConnection()` 를 사용하도록 변경된 부분을 특히 주의해야
+         * 한다. 커넥션을 `con.close()` 를 사용해서 직접 닫아버리면 커넥션이 유지되지 않는 문제가 발생한다. 이 커넥
+         * 션은 이후 로직은 물론이고, 트랜잭션을 종료(커밋, 롤백)할 때 까지 살아있어야 한다.
+         * `DataSourceUtils.releaseConnection()` 을 사용하면 커넥션을 바로 닫는 것이 아니다.
+         * **트랜잭션을 사용하기 위해 동기화된 커넥션은 커넥션을 닫지 않고 그대로 유지해준다.**
+         * 트랜잭션 동기화 매니저가 관리하는 커넥션이 없는 경우 해당 커넥션을 닫는다.
+         */
+        DataSourceUtils.releaseConnection(connection, dataSource);
         JdbcUtils.closeStatement(stmt);
         JdbcUtils.closeResultSet(resultSet);
     }
 
     private Connection getConnection() throws SQLException {
-        Connection connection = dataSource.getConnection();
+        /**
+         * `DataSourceUtils.getConnection()` 는 다음과 같이 동작한다.
+         * **트랜잭션 동기화 매니저가 관리하는 커넥션이 있으면 해당 커넥션을 반환한다.**
+         * 트랜잭션 동기화 매니저가 관리하는 커넥션이 없는 경우 새로운 커넥션을 생성해서 반환한다.
+         */
+        Connection connection = DataSourceUtils.getConnection(dataSource);
         log.info("connection = {},connection.getClass() = {}", connection, connection.getClass());
-
         return connection;
     }
 }

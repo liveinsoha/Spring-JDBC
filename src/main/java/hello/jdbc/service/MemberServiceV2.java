@@ -24,11 +24,13 @@ public class MemberServiceV2 {
             connection.setAutoCommit(false);
             bizLogic(connection, fromId, toId, money);
             connection.commit();
+            log.info("transfer account commit");
         } catch (IllegalStateException e) {
             /**
              * 이체중 예외가 발생하면 예외를 잡고 롤백처리를 한 후 다시 같은 예외를 던진다
              */
             connection.rollback();
+            log.info("transfer account rollback");
             throw new IllegalStateException(e.getMessage());
         } finally {
             release(connection);
